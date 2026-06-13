@@ -2,7 +2,7 @@
   "name": "web-app-load-testing",
   "version": "1.0.0",
   "private": true,
-  "description": "Offline-first heavy React SPA with Fastify mock backend, Playwright E2E, and Locust load testing",
+  "description": "Offline-first heavy React SPA with Fastify mock backend, Playwright E2E, and real-browser Locust load testing",
   "workspaces": [
     "app",
     "api"
@@ -16,13 +16,9 @@
     "typecheck": "npm run typecheck --workspace=app",
     "test:e2e": "npm run test:e2e --workspace=app",
     "test:e2e:ui": "npm run test:e2e:ui --workspace=app",
-    "loadtest:ui": "locust -f loadtest/locustfile.py --host=http://localhost:5173",
-    "loadtest:ui:api": "locust -f loadtest/api-locustfile.py --host=http://localhost:3000",
-    "loadtest:dev": "locust -f loadtest/locustfile.py --host=http://localhost:5173 --headless -u 10 -r 2 -t 2m",
-    "loadtest:integration": "locust -f loadtest/locustfile.py --host=http://localhost:5173 --headless -u 50 -r 5 -t 5m",
-    "loadtest:stress": "locust -f loadtest/locustfile.py --host=http://localhost:5173 --headless -u 250 -r 25 -t 10m",
-    "loadtest:soak": "locust -f loadtest/locustfile.py --host=http://localhost:5173 --headless -u 100 -r 5 -t 1h",
-    "loadtest:api:dev": "locust -f loadtest/api-locustfile.py --host=http://localhost:3000 --headless -u 10 -r 2 -t 2m",
+    "loadtest:ui": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173",
+    "loadtest:browser:dev": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 3 -r 1 -t 1m",
+    "loadtest:browser:integration": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 8 -r 2 -t 3m",
     "verify:offline": "bash scripts/verify-offline.sh",
     "start": "bash scripts/tmux-run.sh",
     "wait": "bash scripts/wait-for-services.sh"

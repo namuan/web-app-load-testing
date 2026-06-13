@@ -14,3 +14,8 @@ urllib3>=2.2.0
 Werkzeug>=3.0.0
 zope.event>=5.0
 zope.interface>=7.0
+
+# Real-browser load testing (loadtest/locustfile_browser.py).
+# playwright is a hard dep for locustfile_browser.py; the HTTP-only
+# locustfile.py does not need it.
+playwright>=1.45.0

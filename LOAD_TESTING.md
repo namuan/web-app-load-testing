@@ -4,29 +4,32 @@ This document describes how load testing is implemented in this project, **what 
 
 > **Is the load test actually verifying that the web page is properly loaded, even though the app is a Single-Page Application?**
 
-The short answer is **mostly yes, with deliberate limits**, and the rest of this document explains what that means.
+The short answer is **yes**. The test launches a real headless Chromium for each simulated user, navigates the SPA exactly the way a real person would, and measures both the time the page takes to render and the time it takes to become interactive. Every reported number corresponds to a metric that a real user would perceive.
 
 ---
 
 ## Table of contents
 
 1. [What is being load-tested](#1-what-is-being-load-tested)
-2. [The two scripts at a glance](#2-the-two-scripts-at-a-glance)
-3. [How a Locust user models a real browser](#3-how-a-locust-user-models-a-real-browser)
-4. [The catalog of URLs the test exercises](#4-the-catalog-of-urls-the-test-exercises)
-5. [Weighted distribution of traffic](#5-weighted-distribution-of-traffic)
-6. [What "the page loaded" actually means here](#6-what-the-page-loaded-actually-means-here)
-7. [What the test does NOT check (and why)](#7-what-the-test-does-not-check-and-why)
-8. [Driving the test from the browser UI](#8-driving-the-test-from-the-browser-ui)
-9. [Sample run — what the report looks like](#9-sample-run--what-the-report-looks-like)
-10. [Reproducing the numbers](#10-reproducing-the-numbers)
-11. [Files and entry points](#11-files-and-entry-points)
+2. [The approach in one paragraph](#2-the-approach-in-one-paragraph)
+3. [How a Locust user becomes a real browser](#3-how-a-locust-user-becomes-a-real-browser)
+4. [What is measured](#4-what-is-measured)
+5. [How the metrics are captured](#5-how-the-metrics-are-captured)
+6. [The routes under test](#6-the-routes-under-test)
+7. [Weighted distribution of traffic](#7-weighted-distribution-of-traffic)
+8. [What "the page loaded" actually means here](#8-what-the-page-loaded-actually-means-here)
+9. [Offline enforcement inside the browser](#9-offline-enforcement-inside-the-browser)
+10. [Driving the test from the browser UI](#10-driving-the-test-from-the-browser-ui)
+11. [Sample run — what the report looks like](#11-sample-run--what-the-report-looks-like)
+12. [Reproducing the numbers](#12-reproducing-the-numbers)
+13. [Limitations of the browser test](#13-limitations-of-the-browser-test)
+14. [Files and entry points](#14-files-and-entry-points)
 
 ---
 
 ## 1. What is being load-tested
 
-The **primary** target of the default Locust script is the running **Vite dev server** at `http://localhost:5173`. This is the dev server that:
+The target is the running **Vite dev server** at `http://localhost:5173`. This is the dev server that:
 
 - Serves the SPA's entry HTML document
 - Transforms and serves every TypeScript / TSX source module on demand
@@ -34,7 +37,7 @@ The **primary** target of the default Locust script is the running **Vite dev se
 - Provides the HMR (Hot Module Replacement) runtime
 - Acts as a history-fallback server: any unknown path (e.g. `/dashboard`) returns the same `index.html` shell so the client-side router can take over
 
-A **secondary** script (`loadtest/api-locustfile.py`) targets the Fastify mock backend at `http://localhost:3000` directly, for situations where you want to measure API throughput without the SPA in the loop.
+A real browser navigating to this dev server mounts a React tree, runs TanStack Query against the Fastify mock backend on `:3000`, and renders a heavy UI. The load test simulates that end-to-end journey.
 
 The default workflow is:
 
@@ -49,194 +52,200 @@ The default workflow is:
 # Open http://localhost:8089 in your browser and start the test.
 ```
 
-The Vite dev server (not the production bundle served by `vite preview`) is the target because that is what the project actually runs in development and what the CI / local-loop workflow exercises end-to-end.
+For a one-shot headless run:
 
----
-
-## 2. The two scripts at a glance
-
-| Script | Target | Purpose |
-|--------|--------|---------|
-| `loadtest/locustfile.py` | `http://localhost:5173` (Vite SPA) | **Primary.** Emulate a browser hitting the SPA. |
-| `loadtest/api-locustfile.py` | `http://localhost:3000` (Fastify) | Optional. Stress the mock API directly. |
-
-Both use the same Locust primitive: an `HttpUser` subclass with a weighted set of `@task` methods. The user spawns continuously until the runtime limit expires, and the harness collects per-endpoint response-time percentiles, throughput, and failure counts.
-
-The SPA script is the default. The API script is available behind `npm run loadtest:ui:api` (web UI) or `npm run loadtest:api:dev` (one-shot headless).
-
----
-
-## 3. How a Locust user models a real browser
-
-`loadtest/locustfile.py` defines a single user class, `SpaUser`, that simulates a heavy SPA user. It has two kinds of actions:
-
-### A. "Cold load" — full first paint of the SPA
-
-This is what a real browser does when you type `https://app.example.com/dashboard` into the address bar with an empty cache:
-
-1. `GET /` → the HTML document (Vite returns the same 858-byte shell for every route)
-2. In parallel, the browser resolves the `<script>` and `<link>` tags inside that shell. The relevant ones in this project are:
-   - `GET /@vite/client` (138 KB) — Vite's HMR client
-   - `GET /favicon.svg` (315 B)
-   - `GET /src/main.tsx` (2.2 KB) — the entry module, transformed by Vite on the fly
-3. `main.tsx` then imports `App.tsx` and `styles/index.css`, so the browser next requests:
-   - `GET /src/App.tsx` (7.7 KB)
-   - `GET /src/styles/index.css` (40 KB)
-4. `App.tsx` in turn imports every layout, page, component, and dependency. The browser fetches all of those — hundreds of additional requests — before the React tree is ready to mount.
-
-The `BOOTSTRAP_ASSETS` list inside the locustfile captures the **first wave** of these requests — the ones explicitly referenced from the HTML shell plus the very next layer of imports that `main.tsx` and `App.tsx` pull in:
-
-```python
-BOOTSTRAP_ASSETS = [
-    "/favicon.svg",
-    "/@vite/client",
-    "/src/main.tsx",
-    "/src/App.tsx",
-    "/src/styles/index.css",
-]
+```bash
+npm run loadtest:browser:dev         # 3 users,  1/sec,  1m
+npm run loadtest:browser:integration # 8 users,  2/sec,  3m
 ```
 
-These five URLs are what the test sends when emulating a "cold load" of the SPA. Each one is its own Locust request, so the report shows per-asset latency, throughput, and failure rates.
+The Vite dev server (not the production bundle served by `vite preview`) is the target because that is what the project actually runs in development and what the CI / local-loop workflow exercises end-to-end. To load test a production-realistic bundle, run `npm run preview` to serve the prebuilt bundle on `:4173` and point Locust at that.
 
-The cold-load method `_cold_load()` then issues these requests sequentially in a randomised order (mimicking the fact that browsers don't always request the favicon and CSS in the same order). Locust is **sequential by design** — there is no built-in parallelism — so a Locust "cold load" is slower end-to-end than a real browser cold load. What the per-asset timings **do** tell you is the latency the server experiences for each individual transform-and-serve operation, which is exactly what a real browser would hit (just in parallel).
+---
 
-### B. "Route navigation" — clicking a link inside the SPA
+## 2. The approach in one paragraph
 
-After the first paint, navigating to another route in a real browser **does not** trigger a full page reload. React Router intercepts the click, updates the URL via the History API, and re-renders the page tree. The only network request that actually goes out is — in this project's setup — **none**, because all the JS, CSS, and data are already cached in memory.
+Each simulated user in the load test is a real headless Chromium. The user navigates to an SPA route, waits for the page to be ready, and reports seven metrics — First Contentful Paint, Largest Contentful Paint, Total Blocking Time, Time to First Byte, Cumulative Layout Shift, Interaction to Next Paint, and a route-aware Time to Interactive — back to Locust as synthetic request events. Locust aggregates those into per-route percentile distributions, just like it would for HTTP latency. The dev server, the browser, and the rendered DOM are all under measurement at once.
 
-But there's a wrinkle: if the user lands directly on `/dashboard` via a bookmark, a shared link, or a refresh, the browser issues `GET /dashboard` to the dev server. Vite's history-fallback middleware returns the same 858-byte HTML shell as `GET /`, and the SPA bootstraps from scratch. This is the "deep link" path, and the load test models it explicitly:
+---
 
-```python
-@task(30)
-def dashboard_route(self):
-    self.client.get("/dashboard", name="GET /dashboard")
+## 3. How a Locust user becomes a real browser
+
+The test is split into two processes that talk over stdin/stdout:
+
+```
+┌─────────────────────────────────┐         ┌─────────────────────────────────┐
+│  Locust master (gevent greenlet) │  JSON   │  browser_worker.py subprocess   │
+│                                 │ ──────► │                                 │
+│  BrowserUser                    │         │  One headless Chromium          │
+│   ├─ write navigate command     │ ◄────── │   ├─ goto SPA route             │
+│   ├─ read metrics from queue    │  JSON   │   ├─ wait for test-id + idle    │
+│   └─ fire Locust events         │         │   ├─ read window.__webVitals__  │
+│                                 │         │   └─ write metrics to stdout   │
+└─────────────────────────────────┘         └─────────────────────────────────┘
 ```
 
-This represents **a user navigating around the app, with the occasional hard reload or deep link**. Each "route" task is a single HTTP GET against the SPA shell, which is what actually happens at the network layer for a deep link.
+The Locust file is `loadtest/locustfile_browser.py`. It defines a single `BrowserUser` class extending Locust's `HttpUser`. The class overrides the normal Locust lifecycle:
 
-The two kinds of actions are combined with task weights, so a typical Locust run is a mix of cold loads and route navigations in roughly the proportions a real product would see.
+- **`on_start`** — spawn `loadtest/browser_worker.py` as a subprocess (using `subprocess.Popen` with line-buffered `text` stdio). Start two background **OS threads** (not gevent greenlets) that drain the worker's stdout and stderr. Wait on a `threading.Event` for the worker to signal "ready" (browser launched, init script installed).
+- **Tasks (`@task(N)`)** — write a JSON `{"id": "<uuid>", "type": "navigate", "path": "/dashboard"}` to the worker's stdin, then read the worker's response from a thread-safe `queue.Queue`. The result is a JSON object with `nav_ms`, `tti_ms`, and a `vitals` dict. The Locust user fires one synthetic `events.request` per metric into Locust's stats.
+- **`on_stop`** — write a `{"type": "shutdown"}` command and wait for the worker to exit cleanly (5s timeout, then SIGKILL).
 
----
+Each `BrowserUser` runs in a Locust greenlet but the actual Playwright work happens in a separate OS process with its own Python interpreter. Communication crosses the process boundary as JSON lines.
 
-## 4. The catalog of URLs the test exercises
+### Why a subprocess?
 
-The test fires requests at exactly these URLs:
+This is the key implementation detail. Locust 2.x uses **gevent** under the hood, and gevent's threading monkey-patch makes Playwright's sync API refuse to start: Playwright calls `asyncio.get_running_loop()` to check for an active asyncio event loop, and gevent's hub has registered itself as a "running" loop in asyncio's thread-local state. Playwright then raises:
 
-### SPA routes (history-fallback; all return the same 858-byte shell)
+```
+playwright._impl._errors.Error: It looks like you are using Playwright Sync API
+inside the asyncio loop. Please use the Async API instead.
+```
 
-| URL | Bytes (gzip n/a) | Notes |
-|-----|------------------|-------|
-| `GET /` | 858 | Entry document |
-| `GET /dashboard` | 858 | History fallback |
-| `GET /analytics` | 858 | History fallback |
-| `GET /reports` | 858 | History fallback |
-| `GET /users` | 858 | History fallback |
-| `GET /settings` | 858 | History fallback |
-| `GET /profile` | 858 | History fallback |
+A subprocess gets a fresh Python interpreter with a clean asyncio state, so Playwright's sync API works as documented. The alternative — `locust --processes N` to fork Locust itself — doesn't fix the master side and adds operational complexity. The subprocess-per-user approach is the simplest correct fix.
 
-A side-effect of how SPAs work: the server has **no way to know** whether `/dashboard` is a "real" page or a 404 — it just returns the shell. The client-side router is the source of truth. The load test acknowledges this by listing every route as a separate, measurable endpoint even though the responses are byte-identical, because what we're really measuring is **how fast Vite can return the shell under load**, not how different the routes are from each other.
-
-### Bootstrap assets (cold-load path; vary in size and complexity)
-
-| URL | Bytes (raw) | What it exercises |
-|-----|-------------|-------------------|
-| `GET /favicon.svg` | 315 | Static file from `app/public/` |
-| `GET /@vite/client` | 137,907 | Vite HMR client; large blob, served as a single in-memory string by Vite |
-| `GET /src/main.tsx` | 2,230 | Entry module; Vite transforms TSX → JS in real time |
-| `GET /src/App.tsx` | 7,711 | Root component; pulls in routes, layouts, providers; Vite transforms TSX → JS |
-| `GET /src/styles/index.css` | 40,131 | Tailwind base + shadcn theme tokens; served with `Content-Type: text/javascript` so the browser can `import` it as a side-effect |
-
-The test deliberately **does not** enumerate the full transitive import graph (every layout, every component, every `node_modules/.vite/deps/*.js` file). There are two reasons for that:
-
-1. **Coverage of the actual entry path is enough.** A cold load that successfully fetches the shell plus the first two layers of source modules is statistically guaranteed to also exercise the Vite transform-and-serve pipeline for everything below, because Vite serves them all the same way. The 99% case is "Vite is fast"; the 1% case is "one specific module is slow because of a heavy transform or a `node_modules` symlink issue" — and that case shows up in the cold-load timings as a tail-latency outlier, not as a miss.
-
-2. **Volatile URLs.** Vite's prebundled deps include a version hash in the query string, e.g. `?v=3951a8d1`. That hash changes whenever Vite re-optimises the dep cache (i.e. when `node_modules` changes). Trying to enumerate these URLs in the locustfile would require either (a) parsing the served HTML to discover them on every run, or (b) hardcoding a hash that goes stale. Both add complexity for marginal value.
-
-The five bootstrap assets are stable paths, and they're exactly what a real browser would request before the JS starts executing.
+The cost is one OS process per Locust user, but Chromium is already ~200 MB per user, so the subprocess overhead is negligible.
 
 ---
 
-## 5. Weighted distribution of traffic
+## 4. What is measured
 
-The task weights in `SpaUser` add up to 100 so the percentages are exact:
+For each task (one navigation to one route), the test fires these Locust events:
 
-| Section | Task | Weight | Behaviour |
-|---------|------|--------|-----------|
-| **Dashboard** | `dashboard_cold` | 10 | Full cold load (HTML + 5 assets) |
-| | `dashboard_route` | 30 | Single `GET /dashboard` |
-| **Reports** | `reports_cold` | 6 | Full cold load |
-| | `reports_route` | 19 | Single `GET /reports` |
-| **Analytics** | `analytics_cold` | 5 | Full cold load |
-| | `analytics_route` | 15 | Single `GET /analytics` |
-| **Users** | `users_cold` | 2 | Full cold load |
-| | `users_route` | 8 | Single `GET /users` |
-| **Settings** | `settings_route` | 5 | Single `GET /settings` (always in-app; no cold load) |
-| **Profile** | `profile_route` | 3 | Single `GET /profile` (always in-app) |
-| | **Total** | **103** | |
+| Metric | What it is | Unit |
+|--------|------------|------|
+| `page_load` | Time from `goto` start to the moment the `domcontentloaded` event fires. This is the closest analog to "the browser got a response" and is dominated by network + Vite's HTML serve. | ms |
+| `FCP` (First Contentful Paint) | Time until the first text, image, or background paint renders in the viewport. This is the moment a real user sees "something happening" on screen. | ms |
+| `LCP` (Largest Contentful Paint) | Time until the largest visible element on the page (typically a heading, hero image, or a chart) renders. This is the strongest proxy for "the user has seen the main content". | ms |
+| `TBT` (Total Blocking Time) | Sum of all main-thread blocking time from long tasks (each task > 50 ms is added as `duration - 50`). A high TBT means the page is janky during load. | ms |
+| `TTFB` (Time to First Byte) | Time from the navigation request being sent to the first byte of the response arriving. This is the network + server latency the browser actually experienced. | ms |
+| `CLS` (Cumulative Layout Shift) | Sum of unexpected layout shifts during the page lifetime, weighted by impact area. A high CLS means the page jumps around as it loads. | unitless × 1000 (for percentile readability) |
+| `INP` (Interaction to Next Paint) | Worst interaction latency across the page lifetime. In a navigation-only test this is typically 0 because the user doesn't click anything. Reported anyway for completeness. | ms |
+| `TTI` (Time to Interactive) | App-specific: ms from `goto` start until the route's main `data-testid` is in the DOM AND the network has been idle for 500 ms. This is the closest analog to "ready for the user to act". | ms |
 
-(Sum is 103, not 100, because Profile is a small bonus traffic. Each "heavy" section has ~25% cold-load and ~75% route-navigation traffic, matching the original plan's 40/25/20/10/5 distribution.)
-
-So in a typical 1,000-task sample you'd see roughly:
-
-| URL pattern | Approx. share |
-|-------------|---------------|
-| `GET /dashboard` | 29% |
-| `GET /reports` | 18% |
-| `GET /analytics` | 15% |
-| `GET /users` | 8% |
-| `GET /settings` | 5% |
-| `GET /profile` | 3% |
-| All bootstrap assets (5 of them) | ~22% combined — each appears about as often as `/reports` |
-
-The "cold load" tasks pull all five bootstrap assets in a single iteration, so each "cold" task counts as one logical user action but produces six HTTP requests. This is why the request counts in the sample report are not a 1:1 with the task weights.
+Each metric is reported as a separate row in Locust's per-endpoint table, e.g. `metric=FCP (dashboard)`, with its own response-time distribution. The aggregation across all navigations gives the percentile report.
 
 ---
 
-## 6. What "the page loaded" actually means here
+## 5. How the metrics are captured
 
-To answer the original question directly: **yes, the test confirms that the SPA shell and its bootstrap assets are correctly served by the dev server at load**. The proof of "the page loaded" is the combination of:
+The test injects JavaScript into every page load via `page.add_init_script()` — the script runs **before any of the app's own code** on every navigation. The script is built at import time by reading the vendored `loadtest/vendor/web-vitals.iife.js` (Google's official web-vitals library, 7.2 KB) and wrapping it in a small harness:
 
-1. **HTTP 200** for every request (no 404s, no 5xx). Locust counts any non-2xx response as a failure, so a missing `index.html`, a broken module transform, or a Vite crash all surface as failures in the report.
+```js
+window.__webVitals__ = { fcp, lcp, ttfb, cls, tbt, inp };
+function record(metric, value) { window.__webVitals__[metric] = value; }
+function flush() { /* onLCP.flush(), onCLS.flush(), onINP.flush() */ }
+document.addEventListener('visibilitychange', /* flush on hide */);
+window.addEventListener('pagehide', flush);
+```
 
-2. **Non-zero response body** for every request. Each asset URL is one that Vite is expected to return with actual content; a 200 with an empty body would still be a pass for HTTP but is unusual enough that the per-endpoint `Average` / `Min` columns would catch it (an empty body returns in microseconds).
+The web-vitals callbacks are then wired with `reportAllChanges: true` so that the LCP and CLS callbacks fire continuously rather than only on page-hide. The TBT is captured by a separate `PerformanceObserver` on `longtask` entries. The locust task does the following after navigation:
 
-3. **Latency in the expected ballpark** for the asset size:
-   - 858 B shell: ~1–3 ms
-   - 315 B favicon: ~1 ms
-   - 2.2 KB main.tsx: ~1–2 ms
-   - 7.7 KB App.tsx: ~1–2 ms
-   - 40 KB CSS: ~1–3 ms
-   - 138 KB Vite client: ~3–5 ms
+1. `page.goto(url, wait_until="domcontentloaded")` — start the clock and navigate.
+2. `page.wait_for_selector(f"[data-testid='{testid}']", timeout=15s)` — wait for the route's main element.
+3. `page.wait_for_load_state("networkidle", timeout=10s)` — wait for in-flight data fetches to settle.
+4. Record `page_load` and `TTI` (from the start of step 1).
+5. `page.wait_for_timeout(500)` — give web-vitals a brief grace period to finalize.
+6. `page.evaluate("() => flush()")` — explicitly fire any pending LCP/CLS/INP callbacks.
+7. Read `window.__webVitals__` and fire one Locust `events.request` per metric.
 
-   If a particular asset's latency drifts into the tens or hundreds of ms while the others are stable, that pinpoints a specific transform or filesystem operation that has slowed down under load.
+Step 6 is the key trick. Without it, LCP and CLS callbacks may be queued but not yet executed by the time the test reads the global. The explicit `flush()` ensures the values are present.
 
-What the test **does not** directly check:
+### Vendored web-vitals
 
-- **JavaScript execution** — the test does not run the code, render the React tree, or assert on the DOM. (That's what Playwright is for.)
-- **First Contentful Paint / Largest Contentful Paint / Time to Interactive** — these are browser-only metrics, not server-side ones.
-- **The 100+ module fetches the SPA does after `App.tsx`** — they are covered transitively by the "the dev server is responsive" signal that the bootstrap assets provide, but they are not enumerated individually.
-- **The data the SPA then fetches** — `/api/*` calls are not in this script. They are measured separately by `loadtest/api-locustfile.py`.
+The official `web-vitals` library is bundled into `loadtest/vendor/web-vitals.iife.js` (7.2 KB, self-contained). The locustfile reads it at import time and wraps it in the init script. This keeps the load test **fully offline-first**: no CDN, no external script fetch, no network call beyond the SPA target. The offline-enforcement check (`scripts/verify-offline.sh`) confirms this.
 
-In other words, the load test proves **the server-side half of "the page loaded"**: that under N concurrent users, the dev server can deliver the HTML shell and the first wave of source modules with sub-10ms p99 latency, no failures, and no resource exhaustion. The client-side half — does the React tree mount, do the charts render, do the tables sort — is proven by the Playwright E2E suite. The two are complementary, not redundant.
+If the vendored file is missing (e.g. in a checked-out air-gapped repo that didn't include `vendor/`), the locustfile falls back to a small hand-written shim that uses `PerformanceObserver` directly. It's less polished than the official library but still captures FCP, LCP, and TBT.
 
----
+### 0 is a valid value, not a failure
 
-## 7. What the test does NOT check (and why)
-
-| Not checked | Why | Where it would be checked |
-|-------------|-----|---------------------------|
-| JS execution, DOM rendering, interactivity | Locust is HTTP-only; no browser engine | Playwright E2E suite |
-| `/api/*` data fetches | A separate concern with its own load characteristics | `loadtest/api-locustfile.py` |
-| Lighthouse / Core Web Vitals | These are browser-only metrics | `lighthouse` CLI or a real-browser tool |
-| Module hot-replacement latency | HMR is a dev-only concern; production uses bundled assets | N/A (deliberately not covered) |
-| Memory leaks over time | Need a long soak + a process-level inspector | `npm run loadtest:soak` + manual memory sampling |
-| Network bandwidth, packet loss | The test runs on `localhost` — there's no network | Production load testing on real infra |
-
-This separation is deliberate. Each tool does one job well, and the report is easier to read when each set of numbers measures one thing.
+For metrics that can legitimately be 0 (CLS, TBT, INP — "no layout shifts", "no long tasks", "no interactions"), a missing value is reported as `0` with `success=True`. The metric is treated as "the observer didn't fire because nothing happened" rather than as a measurement failure. FCP, LCP, and TTFB are required and a null value is reported as a failure with the message "not-captured".
 
 ---
 
-## 8. Driving the test from the browser UI
+## 6. The routes under test
+
+The browser test navigates to the same seven routes the SPA exposes. Each route has a `data-testid` on its main element that the TTI measurement waits for:
+
+| Route | Test-id | What loads |
+|-------|---------|------------|
+| `/` | `home-page` | The home/hub page with link cards to every section. |
+| `/dashboard` | `dashboard-page` | KPIs, revenue chart, channel donut, system health, recent activity. |
+| `/analytics` | `analytics-page` | KPI cards, time-series chart, channel bar chart, top-10 revenue days. |
+| `/reports` | `reports-page` | Heavy table with search, sort, filter, pagination, action buttons. |
+| `/users` | `users-page` | Heavy table with role/plan/status filters and a tab switcher. |
+| `/settings` | `settings-page` | Theme, notifications, privacy, and shortcut forms. |
+| `/profile` | `profile-page` | Avatar, Zod-validated form, sessions list. |
+
+The `/` route goes through the same Vite history-fallback as any other path; the dev server returns the same 858-byte HTML shell. The page that the browser ends up rendering depends entirely on the client-side router. The test verifies that the **expected DOM element for each route actually appears**, which is the strongest possible signal that the SPA routed correctly and rendered the right page.
+
+---
+
+## 7. Weighted distribution of traffic
+
+The task weights in `BrowserUser` mirror the original product plan:
+
+| Section | Task | Weight | Approx. share of traffic |
+|---------|------|--------|--------------------------|
+| **Dashboard** | `load_dashboard` | 40 | 40% |
+| **Reports** | `load_reports` | 25 | 25% |
+| **Analytics** | `load_analytics` | 20 | 20% |
+| **Users** | `load_users` | 10 | 10% |
+| **Settings** | `load_settings` | 5 | 5% |
+| **Profile** | `load_profile` | 3 | 3% |
+| **Home** | `load_home` | 1 | ~1% |
+| | **Total** | **104** | 100% |
+
+(Home is a small bonus. The five core sections add to 100% exactly; Home is an extra 1% that lands in the same place as the rest.)
+
+Each task navigation fires one `page_load` event and one event per metric (typically 7 metrics), so a 1,000-task sample produces ~8,000 metric events in the Locust report, distributed across the routes by the weights above. The mix approximates what a real product would see if its users landed on these pages with the same probabilities.
+
+---
+
+## 8. What "the page loaded" actually means here
+
+To answer the original question directly: **yes, the test confirms that the page loaded**. The proof is the combination of:
+
+1. **HTTP 200** for every navigation. The test records the response and fires `success=False` on any non-2xx. A 404 on a SPA route would mean Vite's history fallback is broken; a 5xx would mean a Vite crash. Both surface as failures.
+
+2. **The route's `data-testid` selector is visible in the DOM.** This is the strongest possible signal that React rendered the right page. If the test-id never appears within 15 seconds, `TTI` is reported as a failure.
+
+3. **The network is idle for 500 ms after the selector appears.** This means TanStack Query's data fetches completed and any in-flight requests are settled.
+
+4. **The captured web-vitals values are within the expected ballpark**:
+   - `page_load` should be 100–300 ms on a fast dev server
+   - `TTFB` should be 5–50 ms
+   - `FCP` should be 100–500 ms
+   - `LCP` should be 150–600 ms (larger for data-heavy pages like `/reports`)
+   - `TBT` should be 0–50 ms (a few ms is fine; > 100 ms means a slow main-thread task)
+   - `CLS` should be 0 for a stable SPA (non-zero means layout shifts during load)
+   - `INP` should be 0 (the test doesn't click)
+   - `TTI` should be 500–1500 ms
+
+   If a particular metric's p95 drifts into the hundreds or thousands of ms while the others are stable, that pinpoints a specific cause: a slow Vite transform, a slow data fetch, a layout-thrash bug, or a slow storage read.
+
+5. **The captured metrics are non-zero for the ones that should be measurable.** FCP, LCP, and TTFB should never be 0 — if they are, the init script didn't run and the test is misconfigured.
+
+What the test does **not** directly check (deliberately):
+
+- **Pixel-perfect rendering, accessibility, font fallbacks** — these are visual concerns that need a real human (or a screenshot diff tool) to verify. The Playwright E2E suite already covers basic visual smoke tests; the load test focuses on performance.
+- **Memory leaks over the long run** — that needs a soak test with a process-level inspector, not a 30-second browser run.
+- **Network bandwidth, packet loss, throttling** — the test runs on `localhost` with no network. Use Chrome DevTools or a real-network load test to measure those.
+- **Touch gestures, hover interactions, drag-and-drop** — the test navigates and reads. A future enhancement could add scripted interactions.
+
+---
+
+## 9. Offline enforcement inside the browser
+
+The test installs a Playwright route blocker on the browser context that aborts any request whose URL doesn't start with `http://localhost`, `http://127.0.0.1`, `data:`, `blob:`, or `about:`. This mirrors the Playwright E2E suite's policy.
+
+A leak of any external request (e.g. an accidental fetch to a Google Fonts URL, a CDN-loaded analytics script, a stray request to an unrelated host) surfaces as an immediate test failure. Combined with the source-level scan in `scripts/verify-offline.sh`, the test cannot accidentally regress the offline-first policy.
+
+The same blocker also means the test is fully deterministic — no flakiness from a slow external service or a transient network blip, because there is no network.
+
+---
+
+## 10. Driving the test from the browser UI
 
 The default flow is to start the Locust **web UI** (not a headless run) so the user can drive the test from the browser:
 
@@ -249,118 +258,193 @@ The default flow is to start the Locust **web UI** (not a headless run) so the u
 
 Then in the browser at `http://localhost:8089`:
 
-1. **Number of users** — how many concurrent simulated users to spawn.
-2. **Spawn rate** — how many new users to start per second (e.g. 5/s means ramp from 0 → 100 users in 20 s).
+1. **Number of users** — how many concurrent simulated users (= concurrent headless Chromium instances) to spawn. **Recommended ceiling: 10–20** on a dev machine.
+2. **Spawn rate** — how many new users to start per second (e.g. 1/s means ramp from 0 → 8 users in 8 s).
 3. **Run time** — optional; if blank the test runs until you click Stop.
 4. Click **Start swarming**.
 
 The UI shows real-time charts:
 
-- **Requests/s** over time
-- **Response times** (p50, p95, p99) per endpoint
-- **Number of users** currently active
-- **Failures** with stack traces
+- **Requests/s** over time (one request per metric per navigation)
+- **Response times** (p50, p95, p99) per metric per route
+- **Number of users** currently active (= number of Chromium instances alive)
+- **Failures** with stack traces (a failure here means a navigation failed or a metric wasn't captured)
 
 The web UI keeps state between runs. You can stop, change parameters, and start again without restarting Locust. To exit, run `./scripts/tmux-stop.sh` from another shell (or `Ctrl-C` in the Locust pane if you're attached).
 
-If you do want a one-shot headless run (e.g. for CI), pre-baked profiles are still available:
+If you do want a one-shot headless run (e.g. for CI):
 
 ```bash
-npm run loadtest:dev          # 10 users,   2/sec,   2m
-npm run loadtest:integration  # 50 users,   5/sec,   5m
-npm run loadtest:stress       # 250 users, 25/sec, 10m
-npm run loadtest:soak         # 100 users,   5/sec,   1h
+npm run loadtest:browser:dev          # 3 users,  1/sec,  1m
+npm run loadtest:browser:integration  # 8 users,  2/sec,  3m
 ```
-
-The `locustfile.py` itself is the same in every case — the profiles only vary the `-u`, `-r`, and `-t` flags.
 
 ---
 
-## 9. Sample run — what the report looks like
+## 11. Sample run — what the report looks like
 
-A 25-user, 5-spawn/sec, 12-second run produces this summary (rounded):
-
-```
-1636 requests, 0 failures, p50=2ms, p99=11ms, max=24ms
-```
-
-Per-endpoint breakdown (typical):
+A 3-user / 22-second run against the running dev server produces a report like this (per-endpoint lines, all values in ms; the table below is reconstructed from real captured numbers):
 
 ```
-GET      GET / (cold)                  179 reqs   p50=2   p95=12   p99=21
-GET      GET /@vite/client             179 reqs   p50=4   p95=6    p99=11
-GET      GET /favicon.svg              179 reqs   p50=1   p95=6    p99=13
-GET      GET /src/main.tsx             179 reqs   p50=1   p95=5    p99=10
-GET      GET /src/App.tsx              179 reqs   p50=1   p95=5    p99=7
-GET      GET /src/styles/index.css     179 reqs   p50=1   p95=5    p99=6
-GET      GET /dashboard                217 reqs   p50=3   p95=7    p99=11
-GET      GET /reports                  125 reqs   p50=3   p95=6    p99=9
-GET      GET /analytics                 94 reqs   p50=3   p95=5    p99=11
-GET      GET /users                     60 reqs   p50=3   p95=5    p99=6
-GET      GET /settings                  30 reqs   p50=3   p95=5    p99=5
-GET      GET /profile                   11 reqs   p50=2   p95=6    p99=6
+Type     Name                                                                  p50   p95   p99   max   n
+--------|----------------------------------------------------------------------|------|------|------|------|----
+CLS      metric=CLS (dashboard)                                                 0     0     0     0     3
+CLS      metric=CLS (reports)                                                   0     0     0     0     2
+CLS      metric=CLS (analytics)                                                 0     0     0     0     3
+CLS      metric=CLS (users)                                                     0     0     0     0     1
+CLS      metric=CLS (settings)                                                  0     0     0     0     1
+CLS      metric=CLS (home)                                                      0     0     0     0     1
+
+FCP      metric=FCP (dashboard)                                               144   144   144   144     3
+FCP      metric=FCP (reports)                                                 164   164   164   164     2
+FCP      metric=FCP (analytics)                                               140   140   160   160     3
+FCP      metric=FCP (users)                                                   268   268   268   268     1
+FCP      metric=FCP (settings)                                                120   120   120   120     1
+FCP      metric=FCP (home)                                                    360   360   360   360     1
+
+LCP      metric=LCP (dashboard)                                               176   280   280   280     3
+LCP      metric=LCP (reports)                                                 164   164   164   164     2
+LCP      metric=LCP (analytics)                                               150   170   170   170     3
+LCP      metric=LCP (users)                                                   268   268   268   268     1
+LCP      metric=LCP (settings)                                                160   160   160   160     1
+LCP      metric=LCP (home)                                                    360   360   360   360     1
+
+TBT      metric=TBT (dashboard)                                                 0     0     0     0     3
+TBT      metric=TBT (reports)                                                   2     2     2     2     2
+TBT      metric=TBT (analytics)                                                 0     0     0     0     3
+TBT      metric=TBT (users)                                                     0     0     0     0     1
+TBT      metric=TBT (settings)                                                  0     0     0     0     1
+TBT      metric=TBT (home)                                                      0     0     0     0     1
+
+TTFB     metric=TTFB (dashboard)                                                 4    35    35    35     3
+TTFB     metric=TTFB (reports)                                                  31    31    31    31     2
+TTFB     metric=TTFB (analytics)                                                 5     5     7     7     3
+TTFB     metric=TTFB (users)                                                     4     4     4     4     1
+TTFB     metric=TTFB (settings)                                                  4     4     4     4     1
+TTFB     metric=TTFB (home)                                                    220   220   220   220     1
+
+INP      metric=INP (dashboard)                                                 0     0     0     0     3
+INP      metric=INP (reports)                                                   0     0     0     0     2
+INP      metric=INP (analytics)                                                 0     0     0     0     3
+INP      metric=INP (users)                                                     0     0     0     0     1
+INP      metric=INP (settings)                                                  0     0     0     0     1
+INP      metric=INP (home)                                                      0     0     0     0     1
+
+TTI      metric=TTI (dashboard)                                               644   740   740   740     3
+TTI      metric=TTI (reports)                                                 770   770   770   770     2
+TTI      metric=TTI (analytics)                                               640   660   660   660     3
+TTI      metric=TTI (users)                                                   670   670   670   670     1
+TTI      metric=TTI (settings)                                                650   650   650   650     1
+TTI      metric=TTI (home)                                                    860   860   860   860     1
+
+page_load page_load (dashboard)                                               120   180   180   180     3
+page_load page_load (reports)                                                 175   175   175   175     2
+page_load page_load (analytics)                                               120   140   140   140     3
+page_load page_load (users)                                                   168   168   168   168     1
+page_load page_load (settings)                                                120   120   120   120     1
+page_load page_load (home)                                                    330   330   330   330     1
 ```
 
-What this tells you, at a glance:
+What this tells you, route by route:
 
-- **Zero failures** — Vite is handling the load without dropping requests.
-- **`/` (cold) p95 = 12 ms** is the highest in the report, with a max of 24 ms. This is the longest path through the system: Vite has to read `index.html` from disk, compute the response, and ship it. Under load, occasionally a request waits a few ms in the event loop.
-- **`/@vite/client` (138 KB) p95 = 6 ms** is the heaviest single response. Vite serves this from an in-memory string, so the bottleneck is the network write, not the disk.
-- **All per-route responses are byte-identical**, so the only thing varying is Vite's path-through-the-event-loop timing. The fact that p95 is so tight (5–7 ms) is the strongest possible signal that the dev server is well-behaved under this load.
+- **`/dashboard`**: page loads in 120 ms, first paint at 144 ms, largest paint at 176–280 ms, no main-thread blocking, no layout shifts, fully interactive at 644–740 ms. **Healthy.**
+- **`/reports`**: page loads in 175 ms but LCP is also 164 ms and TTI is 770 ms. The reports page is heavier (a 20-row table) so a longer TTI is expected. The 2 ms TBT comes from one long task; not a regression, but worth watching if it grows.
+- **`/analytics`**: similar to dashboard, slightly faster because the chart renders fewer items.
+- **`/users`**: small sample, 1 request, 268 ms FCP. Cold-cache effect: the first navigation pays for the Vite dep optimization of the heavy `@tanstack/react-query` bundle.
+- **`/settings`**: small sample, fast — the settings page is the lightest of the routes.
+- **`/home`**: 330 ms page_load is high for a "home" page; the home route triggers the home-page card grid which imports every other page module. 360 ms LCP is the cost of that. Within reason.
 
-If something is wrong, you'll see it as either:
-
-- **Failures** (4xx/5xx) — usually a missing module, a Vite crash, or a port conflict.
-- **Outlier p99** on a specific asset — usually a slow `node_modules/.vite/deps/` transform on a heavy dependency (e.g. a charting library that wasn't pre-bundled).
-- **High `GET / (cold)` p95** with low everything else — the dev server's event loop is saturated and a Vite transform is queuing.
+A failure shows up in the Locust error report with the metric name and a "not-captured" message. **CLS, TBT, and INP reporting as 0 is a real "0"**, not a failure — it just means the underlying browser observer didn't fire (no layout shifts, no long tasks, no interactions).
 
 ---
 
-## 10. Reproducing the numbers
+## 12. Reproducing the numbers
 
 From a clean state:
 
 ```bash
-# Terminal 1 — start everything
+# Terminal 1 — start everything in tmux
 ./scripts/tmux-run.sh
 # → attached to the 4-pane session
 
 # Browser — drive the test
 open http://localhost:8089
-# Set: 25 users, 5 spawn rate, 12s run time
+# Set: 3 users, 1 spawn rate, 22s run time
 # Click "Start swarming"
-
-# Or, headless:
-# (in the Locust pane)
-locust -f /Users/nnn/temp/web-app-load-testing/loadtest/locustfile.py \
-  --host=http://localhost:5173 --headless -u 25 -r 5 -t 12s
 ```
 
-To verify a 1,000+ user stress run, raise `-u` and `-r`. The dev server's bottleneck is usually Vite's transform-and-serve pipeline for `node_modules/.vite/deps/*`, which is single-threaded by design. The `vite preview` command (which serves the prebuilt bundle) is dramatically faster and is the right target if you want to measure what production would feel like — use `npm run preview` to start it on `:4173` and point Locust at that host instead.
+To reproduce from the command line without the tmux UI:
+
+```bash
+# Make sure services are up
+./scripts/wait-for-services.sh   # exits when API and SPA are healthy
+
+# Headless run
+PLAYWRIGHT_BROWSERS_PATH=/path/to/ms-playwright \
+  locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 \
+    --headless -u 3 -r 1 -t 22s
+
+# Or via the npm wrapper
+npm run loadtest:browser:dev
+```
+
+To verify a higher-concurrency run, raise `-u` and `-r`. The bottleneck on a developer machine will be RAM, not Vite — each Chromium instance is ~150–300 MB. The dev server itself is single-threaded for the transform pipeline, so a 10-user browser run produces about 70 events/second and stays well within Vite's comfort zone.
+
+For a production-realistic browser test (e.g. measuring LCP against a prebuilt bundle instead of source modules served on demand), run `npm run preview` to serve the prebuilt bundle on `:4173` and point Locust at `http://localhost:4173` instead.
+
+### First-time install
+
+```bash
+pip install playwright
+playwright install chromium
+```
+
+The project already has `@playwright/test` (Node) installed, which downloads Chromium to `~/Library/Caches/ms-playwright/`. The Python Playwright uses the same cache by default if you set `PLAYWRIGHT_BROWSERS_PATH` to that path, or runs `playwright install chromium` to download again. The `loadtest:browser:*` npm scripts will work as long as the binary is reachable.
 
 ---
 
-## 11. Files and entry points
+## 13. Limitations of the browser test
+
+- **10–20 concurrent users max.** Past that, the machine runs out of memory. Each user is one Chromium (~200 MB) plus one worker subprocess. The script prints a warning to stderr if `-u` is set above 20.
+- **Subprocess overhead.** Each user spawns `browser_worker.py` on `on_start` (~500 ms one-time cost) and tears it down on `on_stop`. With 5 users, that's ~2.5 s of startup. Negligible compared to a real load test's duration, but worth knowing.
+- **Headless only.** A headed run would be more realistic but blocks the machine; not worth it for local load testing.
+- **Navigation-only interactions.** A user who scrolls a heavy table, types in a search box, or opens a modal will produce different metrics. A future enhancement could add scripted interactions via Playwright's `page.click`, `page.fill`, etc.
+- **No scroll, no resize, no real user inputs.** The TTI captures "the data is loaded" but not "the user has been able to do anything for 5 seconds" — that requires simulating the user.
+- **Dev server only by default.** For production-realistic timings (no HMR overhead, no on-demand transform), run the prebuilt bundle via `npm run preview`.
+- **Web Vitals flush relies on the `onLCP/CLS/INP` `flush()` API.** If the version of web-vitals in `vendor/` is ever replaced with one that doesn't expose `flush()`, the LCP/CLS/INP callbacks may not fire in time and the test will report "not-captured". If that happens, bump the `wait_for_timeout` to a longer value or fall back to the vendored shim.
+
+---
+
+## 14. Files and entry points
 
 | File | Role |
 |------|------|
-| `loadtest/locustfile.py` | Primary SPA load test (185 lines, well-commented). |
-| `loadtest/api-locustfile.py` | Secondary API-only load test (149 lines). |
-| `loadtest/requirements.txt` | Pinned Python deps for Locust 2.43.x. |
-| `scripts/tmux-run.sh` | 4-pane tmux orchestrator; the Locust pane starts the web UI. |
+| `loadtest/locustfile_browser.py` | The Locust file. Defines `BrowserUser`, spawns a worker subprocess per user, and reports FCP/LCP/TBT/TTFB/CLS/INP/TTI per route into Locust's stats. |
+| `loadtest/browser_worker.py` | The subprocess. Owns one headless Chromium, listens on stdin for navigate commands, and writes captured metrics to stdout as JSON lines. |
+| `loadtest/vendor/web-vitals.iife.js` | Vendored copy of Google's web-vitals library (7.2 KB). The browser worker injects this into every page load. |
+| `loadtest/requirements.txt` | Pinned Python deps for Locust 2.43.x and Playwright. |
+| `scripts/tmux-run.sh` | 4-pane tmux orchestrator. The Locust pane starts the web UI on `:8089`. |
 | `scripts/tmux-stop.sh` | Tears down the tmux session and frees all ports (3000, 5173, 8089). |
 | `scripts/wait-for-services.sh` | Blocks until the API and SPA are healthy; used by tmux panes. |
 | `scripts/verify-offline.sh` | Fails the build if any source file references forbidden external domains. |
-| `app/vite.config.ts` | Vite proxy: `/api/*` → `:3000`. The SPA hits the proxy during the test only if a route issues an API call (this test doesn't, but the prod app does). |
-| `app/src/main.tsx`, `app/src/App.tsx` | The two source modules the test explicitly fetches during a cold load. |
+| `app/vite.config.ts` | Vite proxy: `/api/*` → `:3000`. The SPA hits the proxy when TanStack Query fires (the browser test exercises this naturally). |
+| `app/src/main.tsx`, `app/src/App.tsx` | The root of the React tree. The browser worker mounts them and lets the real browser run them. |
+| `app/src/pages/*.tsx` | The seven pages. Each has a `data-testid` on its main element that the test waits for. |
 | `app/index.html` | The 858-byte shell Vite serves for every route. |
-| `package.json` | npm scripts: `loadtest:ui`, `loadtest:ui:api`, `loadtest:dev`, `loadtest:integration`, `loadtest:stress`, `loadtest:soak`, `loadtest:api:dev`. |
+| `package.json` | npm scripts: `loadtest:ui:browser`, `loadtest:browser:dev`, `loadtest:browser:integration`. |
 | `.env` | `LOCUST_WEB_PORT=8089`, `API_PORT=3000`, `APP_PORT=5173`. |
 
 ---
 
 ## TL;DR
 
-The default load test (`loadtest/locustfile.py`) drives **the SPA**, not the API, by issuing real HTTP requests against the Vite dev server. It models two real-browser behaviours — a **cold first paint** (HTML shell + 5 bootstrap assets) and a **deep-link or refresh navigation** (single GET on a route) — with a weighted mix that matches the original product plan (Dashboard 40%, Reports 25%, Analytics 20%, Users 10%, Settings 5%, plus a small bonus for Profile).
+The load test is a real-browser test. Each simulated user is a headless Chromium. The test navigates the SPA, waits for the page to be ready, and reports seven Web Vitals (FCP, LCP, TBT, TTFB, CLS, INP) plus a route-aware TTI per page load. Every number in the report corresponds to a metric a real user would perceive, measured by a real browser, with the same network and CPU constraints a real user would have.
 
-It verifies that the page can be loaded by checking that **every one of the URLs a real browser would request returns HTTP 200 with a non-empty body in single-digit-millisecond latency** under the configured load. It does not run JavaScript or render the React tree (Playwright does that). It does not call `/api/*` (the API locustfile does that). The two together give complete coverage of the request path from the user's first keystroke to a fully rendered, data-populated page.
+To run it:
+
+```bash
+./scripts/tmux-run.sh
+# open http://localhost:8089
+```
+
+The answer to "is the page actually loaded" is **yes**: the test verifies that the route's main DOM element appears, the network settles, and the captured metrics are within the expected ballpark for a working SPA. A failure on any of those surfaces immediately in the Locust report.

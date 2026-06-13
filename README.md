@@ -25,8 +25,8 @@ A complete, **offline-first** heavy UI demo with:
 │   ├── server.ts
 │   └── package.json
 ├── loadtest/
-│   ├── locustfile.py          # primary: SPA load test (Vite :5173)
-│   ├── api-locustfile.py      # secondary: API-only load test (:3000)
+│   ├── locustfile_browser.py     # real-browser SPA load test (Playwright + web-vitals)
+│   ├── vendor/web-vitals.iife.js # vendored web-vitals for the browser test
 │   └── requirements.txt
 ├── scripts/
 │   ├── wait-for-services.sh
@@ -110,15 +110,14 @@ npm run test:e2e
 npm run test:e2e:ui
 
 # Open the Locust web UI (start/stop tests from the browser)
-npm run loadtest:ui           # SPA target (:5173) on http://localhost:8089
-npm run loadtest:ui:api       # API target (:3000) on http://localhost:8089
+npm run loadtest:ui:browser   # real-browser SPA test (Playwright) on http://localhost:8089
 
 # Or run a one-shot headless profile (no UI, runs and exits)
-npm run loadtest:dev          # 10 users,  2/sec,  2m
-npm run loadtest:integration  # 50 users,  5/sec,  5m
-npm run loadtest:stress       # 250 users, 25/sec, 10m
-npm run loadtest:soak         # 100 users, 5/sec,  1h
-npm run loadtest:api:dev      # secondary: API-only headless run on :3000
+npm run loadtest:browser:dev         # 3 users,  1/sec,  1m
+npm run loadtest:browser:integration # 8 users,  2/sec,  3m
+
+# The tmux flow always uses the real-browser test in the Locust pane.
+./scripts/tmux-run.sh
 
 # Health checks
 curl http://localhost:3000/health
@@ -200,49 +199,31 @@ Forbidden patterns include: `fonts.googleapis.com`, `googletagmanager.com`, `cdn
 
 ## Load testing
 
-> **For a full technical report — what is being measured, how the test models a real browser, what it doesn't check, and sample numbers — see [`LOAD_TESTING.md`](./LOAD_TESTING.md).**
+> **For a full technical report — what is being measured, how the test works, what it doesn't check, and sample numbers — see [`LOAD_TESTING.md`](./LOAD_TESTING.md).**
 
-The default Locust file (`loadtest/locustfile.py`) **load tests the SPA** — the running Vite dev server on `http://localhost:5173`. It exercises:
+The load test is a **real-browser** test. Each Locust user is a headless Chromium that navigates the SPA, waits for the page to be ready, and reports seven Web Vitals (FCP, LCP, TBT, TTFB, CLS, INP) plus a route-aware TTI per page load. Every number in the report corresponds to a metric a real user would perceive, measured by a real browser.
 
-- The HTML entry shell (`GET /`)
-- Vite's bootstrap assets (`/@vite/client`, `/favicon.svg`, `/src/main.tsx`, `/src/App.tsx`, `/src/styles/index.css`)
-- All SPA routes (`/`, `/dashboard`, `/analytics`, `/reports`, `/users`, `/settings`, `/profile`) — these all return the same HTML via Vite's history fallback in a real browser load
-
-A secondary, optional script (`loadtest/api-locustfile.py`) targets the mock API on port 3000 directly. The primary load test does not call `/api/*`; in a real browser those calls happen via the SPA's data layer, but we measure them separately on the API.
-
-Weighted distribution (mirrors real usage and the original plan):
-
-| Section              | Weight |
-| -------------------- | ------ |
-| Dashboard            | 40%    |
-| Reports              | 25%    |
-| Analytics            | 20%    |
-| Users                | 10%    |
-| Settings             | 5%     |
-| Profile              | 3%     |
-
-Within each section, ~25% of traffic is a "cold load" (HTML + all bootstrap assets) and ~75% is an in-app route navigation. Settings and Profile are always in-app navigations.
+The test exercises all seven SPA routes (`/`, `/dashboard`, `/analytics`, `/reports`, `/users`, `/settings`, `/profile`) and uses the same 40/25/20/10/5/3 weighting as the original product plan (Dashboard / Reports / Analytics / Users / Settings / Profile, plus a small bonus for Home). The dev server is the target.
 
 ### Driving the load test
 
-The default flow is to **start the Locust web UI and drive the test from the browser**:
+The default flow is to start the Locust web UI and drive the test from the browser:
 
 ```bash
-npm run loadtest:ui           # opens http://localhost:8089, target = SPA :5173
-npm run loadtest:ui:api       # opens http://localhost:8089, target = API :3000
+./scripts/tmux-run.sh
+# Open http://localhost:8089
 ```
 
 The UI lets you set the number of users, spawn rate, and runtime per run, and shows live charts as the test runs. Multiple runs can be queued; Locust keeps state between them until you kill the server.
 
-If you want a one-shot headless run without opening a browser (e.g. for CI), the same file is exposed as pre-baked profiles:
+For a one-shot headless run without opening a browser (e.g. for CI), the same file is exposed as pre-baked profiles:
 
 ```bash
-npm run loadtest:dev          # 10 users,  2/sec,  2m
-npm run loadtest:integration  # 50 users,  5/sec,  5m
-npm run loadtest:stress       # 250 users, 25/sec, 10m
-npm run loadtest:soak         # 100 users, 5/sec,  1h
-npm run loadtest:api:dev      # secondary: API-only headless run on :3000
+npm run loadtest:browser:dev          # 3 users,  1/sec,  1m
+npm run loadtest:browser:integration  # 8 users,  2/sec,  3m
 ```
+
+Recommended ceiling: **10–20 concurrent users** on a developer machine (each Chromium is ~150–300 MB).
 
 ## Success criteria
 
