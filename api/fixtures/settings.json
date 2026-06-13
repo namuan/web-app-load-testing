@@ -1,0 +1,25 @@
+{
+  "theme": "system",
+  "language": "en",
+  "timezone": "UTC",
+  "notifications": {
+    "email": true,
+    "push": false,
+    "sms": false,
+    "inApp": true
+  },
+  "privacy": {
+    "shareAnalytics": false,
+    "shareUsageData": false
+  },
+  "display": {
+    "density": "comfortable",
+    "sidebarCollapsed": false,
+    "showAvatars": true
+  },
+  "shortcuts": {
+    "openSearch": "mod+k",
+    "toggleTheme": "mod+shift+l",
+    "openNotifications": "mod+."
+  }
+}

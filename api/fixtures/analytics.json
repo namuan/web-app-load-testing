@@ -1,0 +1,48 @@
+{
+  "summary": {
+    "pageViews": 184230,
+    "sessions": 92410,
+    "bounceRate": 32.4,
+    "avgSessionDurationSec": 184
+  },
+  "timeseries": [
+    { "date": "2026-05-14", "pageViews": 24800, "sessions": 12100, "signups": 142, "revenue": 18420.50 },
+    { "date": "2026-05-15", "pageViews": 26100, "sessions": 12800, "signups": 161, "revenue": 19210.10 },
+    { "date": "2026-05-16", "pageViews": 25400, "sessions": 12400, "signups": 138, "revenue": 17890.75 },
+    { "date": "2026-05-17", "pageViews": 23900, "sessions": 11800, "signups": 122, "revenue": 16430.20 },
+    { "date": "2026-05-18", "pageViews": 25200, "sessions": 12500, "signups": 144, "revenue": 18120.00 },
+    { "date": "2026-05-19", "pageViews": 26800, "sessions": 13200, "signups": 158, "revenue": 19870.40 },
+    { "date": "2026-05-20", "pageViews": 27500, "sessions": 13500, "signups": 174, "revenue": 21340.65 },
+    { "date": "2026-05-21", "pageViews": 26200, "sessions": 12900, "signups": 162, "revenue": 20110.30 },
+    { "date": "2026-05-22", "pageViews": 27100, "sessions": 13400, "signups": 169, "revenue": 20780.10 },
+    { "date": "2026-05-23", "pageViews": 28800, "sessions": 14200, "signups": 188, "revenue": 22430.80 },
+    { "date": "2026-05-24", "pageViews": 29500, "sessions": 14600, "signups": 192, "revenue": 23110.20 },
+    { "date": "2026-05-25", "pageViews": 28100, "sessions": 13900, "signups": 174, "revenue": 21870.50 },
+    { "date": "2026-05-26", "pageViews": 27900, "sessions": 13800, "signups": 169, "revenue": 21510.40 },
+    { "date": "2026-05-27", "pageViews": 29200, "sessions": 14400, "signups": 184, "revenue": 22760.00 },
+    { "date": "2026-05-28", "pageViews": 30100, "sessions": 14900, "signups": 201, "revenue": 24120.30 },
+    { "date": "2026-05-29", "pageViews": 30800, "sessions": 15200, "signups": 209, "revenue": 24890.70 },
+    { "date": "2026-05-30", "pageViews": 31200, "sessions": 15400, "signups": 218, "revenue": 25430.10 },
+    { "date": "2026-05-31", "pageViews": 29800, "sessions": 14700, "signups": 196, "revenue": 23870.90 },
+    { "date": "2026-06-01", "pageViews": 30500, "sessions": 15000, "signups": 205, "revenue": 24520.00 },
+    { "date": "2026-06-02", "pageViews": 31100, "sessions": 15300, "signups": 212, "revenue": 25110.40 },
+    { "date": "2026-06-03", "pageViews": 31900, "sessions": 15700, "signups": 224, "revenue": 26140.80 },
+    { "date": "2026-06-04", "pageViews": 32400, "sessions": 16000, "signups": 231, "revenue": 26890.20 },
+    { "date": "2026-06-05", "pageViews": 33100, "sessions": 16300, "signups": 238, "revenue": 27540.60 },
+    { "date": "2026-06-06", "pageViews": 32800, "sessions": 16200, "signups": 234, "revenue": 27210.10 },
+    { "date": "2026-06-07", "pageViews": 33600, "sessions": 16600, "signups": 246, "revenue": 28140.50 },
+    { "date": "2026-06-08", "pageViews": 34200, "sessions": 16900, "signups": 252, "revenue": 28870.90 },
+    { "date": "2026-06-09", "pageViews": 35100, "sessions": 17300, "signups": 264, "revenue": 29810.30 },
+    { "date": "2026-06-10", "pageViews": 35800, "sessions": 17700, "signups": 271, "revenue": 30450.70 },
+    { "date": "2026-06-11", "pageViews": 36400, "sessions": 18000, "signups": 278, "revenue": 31120.00 },
+    { "date": "2026-06-12", "pageViews": 37200, "sessions": 18400, "signups": 285, "revenue": 32140.50 }
+  ],
+  "channels": [
+    { "name": "Organic", "sessions": 38420, "conversions": 1820, "sharePct": 41.6 },
+    { "name": "Direct", "sessions": 22110, "conversions": 1040, "sharePct": 23.9 },
+    { "name": "Referral", "sessions": 12840, "conversions": 612, "sharePct": 13.9 },
+    { "name": "Social", "sessions": 9820, "conversions": 312, "sharePct": 10.6 },
+    { "name": "Email", "sessions": 6210, "conversions": 410, "sharePct": 6.7 },
+    { "name": "Paid", "sessions": 3010, "conversions": 184, "sharePct": 3.3 }
+  ]
+}

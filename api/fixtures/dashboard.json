@@ -1,0 +1,40 @@
+{
+  "kpis": {
+    "totalUsers": 12534,
+    "activeUsers": 8421,
+    "revenue": 1284590.75,
+    "conversionRate": 3.42,
+    "averageOrderValue": 89.21,
+    "churnRate": 2.1
+  },
+  "growth": {
+    "users": 12.4,
+    "revenue": 8.7,
+    "orders": 15.2,
+    "churn": -0.3
+  },
+  "recentActivity": [
+    { "id": 1, "type": "signup", "user": "alice@example.com", "at": "2026-06-13T09:14:00Z" },
+    { "id": 2, "type": "purchase", "user": "bob@example.com", "amount": 129.99, "at": "2026-06-13T09:11:00Z" },
+    { "id": 3, "type": "support_ticket", "user": "carol@example.com", "at": "2026-06-13T09:08:00Z" },
+    { "id": 4, "type": "signup", "user": "dave@example.com", "at": "2026-06-13T09:02:00Z" },
+    { "id": 5, "type": "purchase", "user": "erin@example.com", "amount": 49.0, "at": "2026-06-13T08:58:00Z" },
+    { "id": 6, "type": "churn", "user": "frank@example.com", "at": "2026-06-13T08:45:00Z" },
+    { "id": 7, "type": "purchase", "user": "grace@example.com", "amount": 89.21, "at": "2026-06-13T08:31:00Z" },
+    { "id": 8, "type": "signup", "user": "heidi@example.com", "at": "2026-06-13T08:14:00Z" }
+  ],
+  "topProducts": [
+    { "id": "p-001", "name": "Pro Plan", "units": 1240, "revenue": 124000.0 },
+    { "id": "p-002", "name": "Team Plan", "units": 820, "revenue": 246000.0 },
+    { "id": "p-003", "name": "Enterprise Plan", "units": 64, "revenue": 320000.0 },
+    { "id": "p-004", "name": "Add-on: Analytics", "units": 410, "revenue": 41000.0 },
+    { "id": "p-005", "name": "Add-on: Support", "units": 230, "revenue": 34500.0 }
+  ],
+  "systemHealth": {
+    "api": "operational",
+    "web": "operational",
+    "db": "operational",
+    "cdn": "n/a",
+    "lastIncident": "2026-05-21T14:02:00Z"
+  }
+}

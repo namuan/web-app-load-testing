@@ -1,0 +1,24 @@
+{
+  "reports": [
+    { "id": "r-001", "title": "Q1 2026 Revenue Summary", "type": "financial", "status": "published", "author": "Alice Johnson", "createdAt": "2026-04-02T10:00:00Z", "rows": 1240, "size": "2.4 MB" },
+    { "id": "r-002", "title": "User Cohort Analysis - March", "type": "analytics", "status": "published", "author": "Bob Smith", "createdAt": "2026-04-05T12:00:00Z", "rows": 8420, "size": "8.1 MB" },
+    { "id": "r-003", "title": "Support Ticket Trends", "type": "support", "status": "draft", "author": "Carol Davis", "createdAt": "2026-04-10T09:00:00Z", "rows": 412, "size": "0.9 MB" },
+    { "id": "r-004", "title": "Marketing Attribution - Spring", "type": "marketing", "status": "published", "author": "Judy Robinson", "createdAt": "2026-04-12T15:00:00Z", "rows": 5320, "size": "5.2 MB" },
+    { "id": "r-005", "title": "Infrastructure Cost Audit", "type": "operations", "status": "review", "author": "Tina Scott", "createdAt": "2026-04-15T11:00:00Z", "rows": 320, "size": "0.4 MB" },
+    { "id": "r-006", "title": "Product Usage Funnel", "type": "analytics", "status": "published", "author": "Grace Lee", "createdAt": "2026-04-18T14:00:00Z", "rows": 9420, "size": "7.6 MB" },
+    { "id": "r-007", "title": "Churn Prediction Model Output", "type": "analytics", "status": "draft", "author": "Daniel Turner", "createdAt": "2026-04-22T16:00:00Z", "rows": 12400, "size": "12.1 MB" },
+    { "id": "r-008", "title": "Customer Health Scores", "type": "support", "status": "published", "author": "Olivia Hall", "createdAt": "2026-04-25T10:00:00Z", "rows": 1840, "size": "1.8 MB" },
+    { "id": "r-009", "title": "Sales Pipeline Q2", "type": "sales", "status": "review", "author": "Peter Allen", "createdAt": "2026-05-02T13:00:00Z", "rows": 720, "size": "1.2 MB" },
+    { "id": "r-010", "title": "Feature Adoption Survey", "type": "product", "status": "published", "author": "Mia Lewis", "createdAt": "2026-05-05T09:00:00Z", "rows": 3200, "size": "3.4 MB" },
+    { "id": "r-011", "title": "Compliance Audit - GDPR", "type": "operations", "status": "published", "author": "Zach Carter", "createdAt": "2026-05-10T11:00:00Z", "rows": 240, "size": "0.6 MB" },
+    { "id": "r-012", "title": "Engineering Velocity Q2", "type": "operations", "status": "draft", "author": "Sam Wright", "createdAt": "2026-05-15T15:00:00Z", "rows": 540, "size": "0.8 MB" },
+    { "id": "r-013", "title": "Renewal Forecast - H2", "type": "sales", "status": "review", "author": "Rachel King", "createdAt": "2026-05-20T14:00:00Z", "rows": 1840, "size": "2.0 MB" },
+    { "id": "r-014", "title": "Mobile App Engagement", "type": "analytics", "status": "published", "author": "Ivan Martinez", "createdAt": "2026-05-25T10:00:00Z", "rows": 6210, "size": "5.8 MB" },
+    { "id": "r-015", "title": "Bug Triage Weekly", "type": "operations", "status": "published", "author": "Karl Clark", "createdAt": "2026-06-01T09:00:00Z", "rows": 120, "size": "0.2 MB" },
+    { "id": "r-016", "title": "Partner Channel Performance", "type": "sales", "status": "draft", "author": "Noah Walker", "createdAt": "2026-06-05T13:00:00Z", "rows": 480, "size": "0.7 MB" },
+    { "id": "r-017", "title": "Onboarding Funnel Deep Dive", "type": "product", "status": "published", "author": "Wendy Baker", "createdAt": "2026-06-08T11:00:00Z", "rows": 4220, "size": "4.2 MB" },
+    { "id": "r-018", "title": "Enterprise Account Reviews", "type": "sales", "status": "review", "author": "Uma Green", "createdAt": "2026-06-10T15:00:00Z", "rows": 84, "size": "0.3 MB" },
+    { "id": "r-019", "title": "Security Posture Assessment", "type": "operations", "status": "published", "author": "Victor Adams", "createdAt": "2026-06-11T16:00:00Z", "rows": 160, "size": "0.5 MB" },
+    { "id": "r-020", "title": "Brand Sentiment Snapshot", "type": "marketing", "status": "draft", "author": "Anna Mitchell", "createdAt": "2026-06-12T12:00:00Z", "rows": 1240, "size": "1.4 MB" }
+  ]
+}
