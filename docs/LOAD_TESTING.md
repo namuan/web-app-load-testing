@@ -414,10 +414,14 @@ For a production-realistic browser test (e.g. measuring LCP against a prebuilt b
 ### First-time install
 
 ```bash
-# Locust itself is in a pipx venv managed by the repo
-pipx install locust
-pipx inject locust locust-plugins==4.0
-playwright install chromium
+# Python deps are declared inline in loadtest/locustfile_browser.py
+# and resolved automatically by uv at runtime.
+# No separate pip install, pipx, or requirements.txt is needed.
+
+# Install Playwright's Chromium browser for both Node.js E2E and Python Locust:
+npx --workspace=app playwright install chromium
+# Or, from Python:
+uv run playwright install chromium
 ```
 
 The project already has `@playwright/test` (Node) installed, which downloads Chromium to `~/Library/Caches/ms-playwright/`. The Python Playwright uses the same cache by default if you set `PLAYWRIGHT_BROWSERS_PATH` to that path, or runs `playwright install chromium` to download again. The `loadtest:browser:*` npm scripts will work as long as the binary is reachable.
@@ -442,7 +446,6 @@ The project already has `@playwright/test` (Node) installed, which downloads Chr
 |------|------|
 | `loadtest/locustfile_browser.py` | The Locust file. Defines `BrowserUser(PlaywrightUser)` with async `@pw @task(N)` methods, installs the web-vitals init script, enforces offline route blocking, captures FCP/LCP/TBT/TTFB/CLS/INP/TTI per route, and fires one `events.request` per metric. |
 | `loadtest/vendor/web-vitals.iife.js` | Vendored copy of Google's web-vitals library (7.2 KB). The locustfile injects this into every page load via `add_init_script`. |
-| `loadtest/requirements.txt` | Pinned Python deps: `locust>=2.43`, `locust-plugins>=4.0`, `playwright>=1.45`. |
 | `scripts/tmux-run.sh` | 4-pane tmux orchestrator. The Locust pane starts the web UI on `:8089`. |
 | `scripts/tmux-stop.sh` | Tears down the tmux session and frees all ports (3000, 5173, 8089). |
 | `scripts/wait-for-services.sh` | Blocks until the API and SPA are healthy; used by tmux panes. |
@@ -451,7 +454,7 @@ The project already has `@playwright/test` (Node) installed, which downloads Chr
 | `app/src/main.tsx`, `app/src/App.tsx` | The root of the React tree. The browser worker mounts them and lets the real browser run them. |
 | `app/src/pages/*.tsx` | The seven pages. Each has a `data-testid` on its main element that the test waits for. |
 | `app/index.html` | The 858-byte shell Vite serves for every route. |
-| `package.json` | npm scripts: `loadtest:ui:browser`, `loadtest:browser:dev`, `loadtest:browser:integration`. |
+| `package.json` | npm scripts: `loadtest:ui`, `loadtest:browser:dev`, `loadtest:browser:integration`. |
 | `.env` | `LOCUST_WEB_PORT=8089`, `API_PORT=3000`, `APP_PORT=5173`. |
 
 ---

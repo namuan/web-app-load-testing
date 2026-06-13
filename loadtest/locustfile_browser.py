@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = [
+#   "locust==2.43.3",
+#   "locust-plugins>=4.0",
+#   "playwright>=1.45.0",
+# ]
+# ///
 """Locust load test for the local SPA using a real headless Chromium browser.
 
 Target:
@@ -34,15 +42,18 @@ Per route, the test fires synthetic Locust request events for:
 Each metric is reported as a separate row in Locust's per-endpoint table,
 e.g. `metric=FCP (dashboard)`, with its own response-time distribution.
 
-Run with one of:
+Dependencies are declared inline (PEP 723) and resolved automatically by
+uv. Run with either of these forms (they are equivalent):
 
-  locust -f loadtest/locustfile_browser.py --host=http://localhost:5173
-  locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 5 -r 1 -t 30s
+  uv run loadtest/locustfile_browser.py --host=http://localhost:5173
+  uv run loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 5 -r 1 -t 30s
 
-Requires:
+  # Or the classic locust invocation (requires locust on PATH):
+  # locust -f loadtest/locustfile_browser.py --host=http://localhost:5173
 
-  pip install locust-plugins playwright
-  playwright install chromium
+You also need a Chromium browser binary for Playwright:
+
+  uv run playwright install chromium
 """
 from __future__ import annotations
 
@@ -328,3 +339,12 @@ def _on_test_start(environment, **kwargs):
     print(f"  Vitals: FCP, LCP, TBT, TTFB, CLS, INP, TTI")
     print(f"  Web vitals source: {'vendored' if WEB_VITALS_JS_PATH.exists() else 'fallback shim'}")
     print("=" * 60)
+
+
+# ---------- uv run entry point ----------
+
+if __name__ == "__main__":
+    import subprocess
+    import sys
+
+    subprocess.check_call(["locust", "-f", __file__] + sys.argv[1:])

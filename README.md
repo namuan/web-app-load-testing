@@ -14,13 +14,16 @@ A complete, **offline-first** heavy UI demo with:
 ## One-time setup (online)
 
 ```bash
-# Install all Node dependencies (root + workspaces)
+# Install Node dependencies (root + workspaces)
 npm install
 
-# Install Python deps for Locust
-pip3 install -r loadtest/requirements.txt
+# Python deps for Locust are declared inline in the script itself
+# and resolved automatically by uv. Install uv if you don't have it:
+#   curl -LsSf https://astral.sh/uv/install.sh | sh
+# No separate pip install or requirements.txt is needed.
 
-# Install Playwright's Chromium browser
+# Install Playwright's Chromium browser (for both Node.js E2E and Python Locust)
+uv run playwright install chromium
 npx --workspace=app playwright install chromium
 ```
 
@@ -83,7 +86,7 @@ npm run test:e2e
 npm run test:e2e:ui
 
 # Open the Locust web UI (start/stop tests from the browser)
-npm run loadtest:ui:browser   # real-browser SPA test (Playwright) on http://localhost:8089
+npm run loadtest:ui   # real-browser SPA test (Playwright) on http://localhost:8089
 
 # Or run a one-shot headless profile (no UI, runs and exits)
 npm run loadtest:browser:dev         # 3 users,  1/sec,  1m

@@ -8,7 +8,7 @@
     "api"
   ],
   "scripts": {
-    "install:all": "npm install && npm install --workspace=api && pip3 install -r loadtest/requirements.txt && npx --workspace=app playwright install chromium",
+    "install:all": "npm install && npm install --workspace=api && uv run playwright install chromium && npx --workspace=app playwright install chromium",
     "dev:api": "npm run dev --workspace=api",
     "dev:app": "npm run dev --workspace=app",
     "build": "npm run build --workspace=app",
@@ -16,9 +16,9 @@
     "typecheck": "npm run typecheck --workspace=app",
     "test:e2e": "npm run test:e2e --workspace=app",
     "test:e2e:ui": "npm run test:e2e:ui --workspace=app",
-    "loadtest:ui": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173",
-    "loadtest:browser:dev": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 3 -r 1 -t 1m",
-    "loadtest:browser:integration": "locust -f loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 8 -r 2 -t 3m",
+    "loadtest:ui": "uv run loadtest/locustfile_browser.py --host=http://localhost:5173",
+    "loadtest:browser:dev": "uv run loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 3 -r 1 -t 1m",
+    "loadtest:browser:integration": "uv run loadtest/locustfile_browser.py --host=http://localhost:5173 --headless -u 8 -r 2 -t 3m",
     "verify:offline": "bash scripts/verify-offline.sh",
     "start": "bash scripts/tmux-run.sh",
     "wait": "bash scripts/wait-for-services.sh"

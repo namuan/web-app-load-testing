@@ -78,7 +78,7 @@ run_foreground() {
   echo "[tmux-run] Open that URL in your browser to start/stop load tests."
   echo "[tmux-run] Press Ctrl-C here to stop Locust and the dev services."
   echo "[tmux-run] Using the real-browser load test (one Chromium per user)."
-  (cd "$ROOT_DIR" && locust -f loadtest/locustfile_browser.py --host="$APP_URL" -P "$LOCUST_WEB_PORT") || true
+  (cd "$ROOT_DIR" && uv run loadtest/locustfile_browser.py --host="$APP_URL" -P "$LOCUST_WEB_PORT") || true
 
   echo "[tmux-run] Done. Killing services…"
   [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
@@ -133,7 +133,7 @@ echo "  Locust:     $LOCUST_PANE  (bottom-right, real-browser test)"
 API_CMD="cd '$ROOT_DIR/api' && echo '[api] starting…' && npm run dev"
 APP_CMD="cd '$ROOT_DIR/app' && echo '[app] starting…' && npm run dev"
 E2E_CMD="cd '$ROOT_DIR' && echo '[playwright] waiting for services…' && bash '$ROOT_DIR/scripts/wait-for-services.sh' && echo '[playwright] running…' && cd '$ROOT_DIR/app' && npm run test:e2e"
-LOCUST_CMD="cd '$ROOT_DIR' && echo '[locust] waiting for services…' && bash '$ROOT_DIR/scripts/wait-for-services.sh' && echo '[locust] starting web UI on http://localhost:${LOCUST_WEB_PORT} — open that URL in your browser to start/stop the test.' && echo '[locust] using real-browser load test (one Chromium per user).' && locust -f '$ROOT_DIR/loadtest/locustfile_browser.py' --host='$APP_URL' -P ${LOCUST_WEB_PORT}"
+LOCUST_CMD="cd '$ROOT_DIR' && echo '[locust] waiting for services…' && bash '$ROOT_DIR/scripts/wait-for-services.sh' && echo '[locust] starting web UI on http://localhost:${LOCUST_WEB_PORT} — open that URL in your browser to start/stop the test.' && echo '[locust] using real-browser load test (one Chromium per user).' && uv run '$ROOT_DIR/loadtest/locustfile_browser.py' --host='$APP_URL' -P ${LOCUST_WEB_PORT}"
 
 # Give the shells a moment to come up so the first C-m isn't lost.
 sleep 1
