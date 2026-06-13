@@ -58,6 +58,30 @@ from typing import Any
 from locust import HttpUser, task, between, events
 
 
+# ---------- gevent compatibility shim ----------
+# Locust 2.x uses gevent under the hood, and gevent's threading module
+# installs an "after fork in child" hook via os.register_at_fork. On
+# Python 3.11+ the hook has a path that asserts `not thread.is_alive()`
+# for threads that don't expose a `_handle` attribute, which is exactly
+# the case for the gevent-patched MainThread. The assertion is a
+# false positive in our setup (we don't care about greenlet bookkeeping
+# across fork; our child has its own clean Python state), and it
+# surfaces as a noisy "Exception ignored in:" traceback in the master.
+#
+# Replace the bound method on the singleton instance (not the class —
+# the class-method replacement doesn't affect the already-registered
+# callback, which is a bound method captured at registration time).
+try:
+    import gevent.threading as _gthreading
+    _gthreading._fork_hooks.after_fork_in_child = lambda self: None
+    # Debug: confirm the patch took effect
+    print(f"[locustfile_browser] gevent fork hook patched to no-op", flush=True)
+except Exception as e:
+    # gevent not available or layout changed; nothing to do.
+    print(f"[locustfile_browser] gevent patch failed: {e!r}", flush=True)
+    pass
+
+
 HOST_DEFAULT = "http://localhost:5173"
 SCRIPT_DIR = Path(__file__).parent
 WORKER_PATH = SCRIPT_DIR / "browser_worker.py"
