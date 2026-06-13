@@ -9,6 +9,8 @@ A complete, **offline-first** heavy UI demo with:
 - **tmux** orchestration for a 4-pane monitoring dashboard
 - **Zero external network traffic** during test execution
 
+![](docs/locust.png)
+
 ## Repository Layout
 
 ```
