@@ -16,6 +16,10 @@ zope.event>=5.0
 zope.interface>=7.0
 
 # Real-browser load testing (loadtest/locustfile_browser.py).
-# playwright is a hard dep for locustfile_browser.py; the HTTP-only
-# locustfile.py does not need it.
+# - locust-plugins provides PlaywrightUser, a Locust User class that
+#   runs async Playwright inside an asyncio event loop, bridged to
+#   Locust's gevent greenlets. This is the recommended approach
+#   because it sidesteps the gevent + Playwright sync API conflict.
+# - playwright (Python) is the underlying browser automation library.
+locust-plugins>=4.0
 playwright>=1.45.0

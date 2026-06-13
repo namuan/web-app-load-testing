@@ -25,7 +25,7 @@ A complete, **offline-first** heavy UI demo with:
 │   ├── server.ts
 │   └── package.json
 ├── loadtest/
-│   ├── locustfile_browser.py     # real-browser SPA load test (Playwright + web-vitals)
+│   ├── locustfile_browser.py     # real-browser SPA load test (locust-plugins PlaywrightUser + web-vitals)
 │   ├── vendor/web-vitals.iife.js # vendored web-vitals for the browser test
 │   └── requirements.txt
 ├── scripts/

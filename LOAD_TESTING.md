@@ -71,40 +71,60 @@ Each simulated user in the load test is a real headless Chromium. The user navig
 
 ## 3. How a Locust user becomes a real browser
 
-The test is split into two processes that talk over stdin/stdout:
+The test is built on top of **[locust-plugins](https://github.com/SvenskaSpel/locust-plugins)**, which provides a `PlaywrightUser` base class that solves the long-standing conflict between Locust (gevent) and Playwright's asyncio event loop.
 
 ```
-┌─────────────────────────────────┐         ┌─────────────────────────────────┐
-│  Locust master (gevent greenlet) │  JSON   │  browser_worker.py subprocess   │
-│                                 │ ──────► │                                 │
-│  BrowserUser                    │         │  One headless Chromium          │
-│   ├─ write navigate command     │ ◄────── │   ├─ goto SPA route             │
-│   ├─ read metrics from queue    │  JSON   │   ├─ wait for test-id + idle    │
-│   └─ fire Locust events         │         │   ├─ read window.__webVitals__  │
-│                                 │         │   └─ write metrics to stdout   │
-└─────────────────────────────────┘         └─────────────────────────────────┘
+┌─────────────────────────────────────┐
+│  Locust (gevent greenlet)           │
+│                                     │
+│  BrowserUser(PlaywrightUser)        │
+│   ├─ @pw async with self.playwright │
+│   │     → spawns 1 headless Chromium│
+│   ├─ async @task(N) methods         │
+│   │     → page.goto(), wait, capture│
+│   └─ events.request.fire(metric, t) │ ← reported to Locust stats
+│                                     │
+│  Bridged by:                        │
+│   asyncio.run_coroutine_threadsafe  │
+│     + gevent.sleep(0.1) loop        │
+│     (provided by locust-plugins)    │
+└─────────────────────────────────────┘
 ```
 
-The Locust file is `loadtest/locustfile_browser.py`. It defines a single `BrowserUser` class extending Locust's `HttpUser`. The class overrides the normal Locust lifecycle:
+The Locust file is `loadtest/locustfile_browser.py`. It defines a single `BrowserUser` class extending `PlaywrightUser` from `locust_plugins`:
 
-- **`on_start`** — spawn `loadtest/browser_worker.py` as a subprocess (using `subprocess.Popen` with line-buffered `text` stdio). Start two background **OS threads** (not gevent greenlets) that drain the worker's stdout and stderr. Wait on a `threading.Event` for the worker to signal "ready" (browser launched, init script installed).
-- **Tasks (`@task(N)`)** — write a JSON `{"id": "<uuid>", "type": "navigate", "path": "/dashboard"}` to the worker's stdin, then read the worker's response from a thread-safe `queue.Queue`. The result is a JSON object with `nav_ms`, `tti_ms`, and a `vitals` dict. The Locust user fires one synthetic `events.request` per metric into Locust's stats.
-- **`on_stop`** — write a `{"type": "shutdown"}` command and wait for the worker to exit cleanly (5s timeout, then SIGKILL).
+- **`on_start`** — the `PlaywrightUser` parent launches one headless Chromium browser per user. The browser is shared across all of that user's tasks (re-using it would not be realistic, so the `@pw` decorator spins up a fresh `BrowserContext` per task — see below).
+- **Tasks (decorated with `@pw` and `@task(N)`)** — Locust's normal task scheduling picks one of the seven weighted `load_<route>` methods. The `@pw` decorator bridges the `async def` into the gevent world:
+  1. `page.goto(url, wait_until="domcontentloaded")`
+  2. `page.wait_for_selector(f"[data-testid='{testid}']", timeout=15s)` — wait for the route's main element to appear in the DOM
+  3. `page.wait_for_load_state("networkidle", timeout=10s)` — wait for TanStack Query's data fetches to settle
+  4. `page.wait_for_timeout(500)` — give web-vitals a brief grace period
+  5. `page.evaluate("() => window.__flushVitals__()")` — flush any pending LCP/CLS/INP callbacks
+  6. Read `window.__webVitals__` from the page
+  7. Fire one Locust `events.request` event per metric (`page_load`, `FCP`, `LCP`, `TBT`, `TTFB`, `CLS`, `INP`, `TTI`) with the captured value
+- **`on_stop`** — the parent class tears the browser down cleanly.
 
-Each `BrowserUser` runs in a Locust greenlet but the actual Playwright work happens in a separate OS process with its own Python interpreter. Communication crosses the process boundary as JSON lines.
+### Why locust-plugins instead of a subprocess?
 
-### Why a subprocess?
+Locust 2.x runs user tasks in **gevent greenlets**. Playwright's sync API checks for an active asyncio event loop on every call; under gevent's monkey-patch the hub looks "active" to asyncio, and Playwright raises `It looks like you are using Playwright Sync API inside the asyncio loop`. This used to force a workaround where each Locust user would spawn a **subprocess** running a separate Python interpreter, communicating over stdin/stdout. That worked, but added operational complexity (one process per user, JSON-line protocol, lifecycle management).
 
-This is the key implementation detail. Locust 2.x uses **gevent** under the hood, and gevent's threading monkey-patch makes Playwright's sync API refuse to start: Playwright calls `asyncio.get_running_loop()` to check for an active asyncio event loop, and gevent's hub has registered itself as a "running" loop in asyncio's thread-local state. Playwright then raises:
+`locust-plugins` solves it cleanly by running an **asyncio event loop in a background thread** and bridging async tasks into the gevent world via `asyncio.run_coroutine_threadsafe(coro, loop)` plus a `gevent.sleep(0.1)` poll. The async Playwright API runs in the thread; Locust user code blocks on a `gevent` event until the future completes. The result is:
 
-```
-playwright._impl._errors.Error: It looks like you are using Playwright Sync API
-inside the asyncio loop. Please use the Async API instead.
-```
+- **One process, one Locust master, one Chromium per user.** No subprocess fork, no JSON protocol, no thread-shared queues.
+- **The async Playwright API as documented.** No need to wrap `page.goto` in a `loop.run_until_complete` or in a `subprocess.run(["python", "worker.py", ...])`.
+- **The bridge is a battle-tested pattern.** The same `run_coroutine_threadsafe` + gevent-poll pattern is used by gevent's own documentation for asyncio interop.
 
-A subprocess gets a fresh Python interpreter with a clean asyncio state, so Playwright's sync API works as documented. The alternative — `locust --processes N` to fork Locust itself — doesn't fix the master side and adds operational complexity. The subprocess-per-user approach is the simplest correct fix.
+A harmless side effect of the asyncio/threaded approach is an occasional `Exception ignored in: <bound method _ForkHooks.after_fork_in_child ...>` line in the Locust output, raised by gevent's threading module when Playwright's driver subprocess forks a child for IPC. It is a known gevent 23.x + Python 3.11 false positive (the assertion is `assert not thread.is_alive()` and the thread **is** alive in the child, by design of Playwright's IPC bridge). It does not affect test execution or captured metrics.
 
-The cost is one OS process per Locust user, but Chromium is already ~200 MB per user, so the subprocess overhead is negligible.
+### One Chromium per user
+
+Locust's standard "users" model becomes "concurrent headless Chromium instances" here. Each user is given a private browser, which means:
+
+- **No state leaks between simulated users.** Cookies, `localStorage`, and IndexedDB are isolated.
+- **Memory cost is significant.** Each headless Chromium is ~150–300 MB. On a developer laptop, the practical ceiling is **10–20 concurrent users** before the system starts swapping.
+- **The "spawn rate" setting directly controls how many browsers come up.** A spawn rate of 5/s with a target of 10 users means ten browsers spin up over two seconds.
+
+A future enhancement could use a browser pool with `BrowserContext` recycling, but at the scale this project load-tests at, the simple one-browser-per-user model is the easiest to reason about and the most realistic.
 
 ---
 
@@ -129,27 +149,26 @@ Each metric is reported as a separate row in Locust's per-endpoint table, e.g. `
 
 ## 5. How the metrics are captured
 
-The test injects JavaScript into every page load via `page.add_init_script()` — the script runs **before any of the app's own code** on every navigation. The script is built at import time by reading the vendored `loadtest/vendor/web-vitals.iife.js` (Google's official web-vitals library, 7.2 KB) and wrapping it in a small harness:
+The test injects JavaScript into every page load via `page.context.add_init_script()` — the script runs **before any of the app's own code** on every navigation. The script is built at import time by reading the vendored `loadtest/vendor/web-vitals.iife.js` (Google's official web-vitals library, 7.2 KB) and wrapping it in a small harness:
 
 ```js
-window.__webVitals__ = { fcp, lcp, ttfb, cls, tbt, inp };
+window.__webVitals__ = { fcp: null, lcp: null, ttfb: null, cls: null, tbt: null, inp: null };
 function record(metric, value) { window.__webVitals__[metric] = value; }
-function flush() { /* onLCP.flush(), onCLS.flush(), onINP.flush() */ }
-document.addEventListener('visibilitychange', /* flush on hide */);
-window.addEventListener('pagehide', flush);
+function flushVitals() { /* onLCP.flush(), onCLS.flush(), onINP.flush() */ }
+window.__flushVitals__ = flushVitals;
 ```
 
-The web-vitals callbacks are then wired with `reportAllChanges: true` so that the LCP and CLS callbacks fire continuously rather than only on page-hide. The TBT is captured by a separate `PerformanceObserver` on `longtask` entries. The locust task does the following after navigation:
+The web-vitals callbacks are wired with `reportAllChanges: true` so that the LCP and CLS callbacks fire continuously rather than only on page-hide. The TBT is captured by a separate `PerformanceObserver` on `longtask` entries. The locust task does the following after navigation:
 
 1. `page.goto(url, wait_until="domcontentloaded")` — start the clock and navigate.
 2. `page.wait_for_selector(f"[data-testid='{testid}']", timeout=15s)` — wait for the route's main element.
 3. `page.wait_for_load_state("networkidle", timeout=10s)` — wait for in-flight data fetches to settle.
 4. Record `page_load` and `TTI` (from the start of step 1).
 5. `page.wait_for_timeout(500)` — give web-vitals a brief grace period to finalize.
-6. `page.evaluate("() => flush()")` — explicitly fire any pending LCP/CLS/INP callbacks.
+6. `page.evaluate("() => window.__flushVitals__()")` — explicitly fire any pending LCP/CLS/INP callbacks.
 7. Read `window.__webVitals__` and fire one Locust `events.request` per metric.
 
-Step 6 is the key trick. Without it, LCP and CLS callbacks may be queued but not yet executed by the time the test reads the global. The explicit `flush()` ensures the values are present.
+Step 6 is the key trick. Without it, LCP and CLS callbacks may be queued but not yet executed by the time the test reads the global. The explicit `flushVitals()` ensures the values are present.
 
 ### Vendored web-vitals
 
@@ -206,7 +225,7 @@ Each task navigation fires one `page_load` event and one event per metric (typic
 
 To answer the original question directly: **yes, the test confirms that the page loaded**. The proof is the combination of:
 
-1. **HTTP 200** for every navigation. The test records the response and fires `success=False` on any non-2xx. A 404 on a SPA route would mean Vite's history fallback is broken; a 5xx would mean a Vite crash. Both surface as failures.
+1. **HTTP 200 for every navigation.** The test records the response and fires `success=False` on any non-2xx. A 404 on a SPA route would mean Vite's history fallback is broken; a 5xx would mean a Vite crash. Both surface as failures.
 
 2. **The route's `data-testid` selector is visible in the DOM.** This is the strongest possible signal that React rendered the right page. If the test-id never appears within 15 seconds, `TTI` is reported as a failure.
 
@@ -395,7 +414,9 @@ For a production-realistic browser test (e.g. measuring LCP against a prebuilt b
 ### First-time install
 
 ```bash
-pip install playwright
+# Locust itself is in a pipx venv managed by the repo
+pipx install locust
+pipx inject locust locust-plugins==4.0
 playwright install chromium
 ```
 
@@ -405,12 +426,12 @@ The project already has `@playwright/test` (Node) installed, which downloads Chr
 
 ## 13. Limitations of the browser test
 
-- **10–20 concurrent users max.** Past that, the machine runs out of memory. Each user is one Chromium (~200 MB) plus one worker subprocess. The script prints a warning to stderr if `-u` is set above 20.
-- **Subprocess overhead.** Each user spawns `browser_worker.py` on `on_start` (~500 ms one-time cost) and tears it down on `on_stop`. With 5 users, that's ~2.5 s of startup. Negligible compared to a real load test's duration, but worth knowing.
+- **10–20 concurrent users max.** Past that, the machine runs out of memory. Each user is one Chromium (~200 MB). The script prints a warning to stderr if `-u` is set above 20.
 - **Headless only.** A headed run would be more realistic but blocks the machine; not worth it for local load testing.
 - **Navigation-only interactions.** A user who scrolls a heavy table, types in a search box, or opens a modal will produce different metrics. A future enhancement could add scripted interactions via Playwright's `page.click`, `page.fill`, etc.
 - **No scroll, no resize, no real user inputs.** The TTI captures "the data is loaded" but not "the user has been able to do anything for 5 seconds" — that requires simulating the user.
 - **Dev server only by default.** For production-realistic timings (no HMR overhead, no on-demand transform), run the prebuilt bundle via `npm run preview`.
+- **Harmless gevent fork-hook noise.** With `PlaywrightUser`, an `Exception ignored in: <bound method _ForkHooks.after_fork_in_child ...>` may appear in the Locust output. It is a known gevent 23.x + Python 3.11 false positive from gevent's threading module asserting about the threading state of Playwright's child processes. It does not affect test execution, metric capture, or the Locust report.
 - **Web Vitals flush relies on the `onLCP/CLS/INP` `flush()` API.** If the version of web-vitals in `vendor/` is ever replaced with one that doesn't expose `flush()`, the LCP/CLS/INP callbacks may not fire in time and the test will report "not-captured". If that happens, bump the `wait_for_timeout` to a longer value or fall back to the vendored shim.
 
 ---
@@ -419,10 +440,9 @@ The project already has `@playwright/test` (Node) installed, which downloads Chr
 
 | File | Role |
 |------|------|
-| `loadtest/locustfile_browser.py` | The Locust file. Defines `BrowserUser`, spawns a worker subprocess per user, and reports FCP/LCP/TBT/TTFB/CLS/INP/TTI per route into Locust's stats. |
-| `loadtest/browser_worker.py` | The subprocess. Owns one headless Chromium, listens on stdin for navigate commands, and writes captured metrics to stdout as JSON lines. |
-| `loadtest/vendor/web-vitals.iife.js` | Vendored copy of Google's web-vitals library (7.2 KB). The browser worker injects this into every page load. |
-| `loadtest/requirements.txt` | Pinned Python deps for Locust 2.43.x and Playwright. |
+| `loadtest/locustfile_browser.py` | The Locust file. Defines `BrowserUser(PlaywrightUser)` with async `@pw @task(N)` methods, installs the web-vitals init script, enforces offline route blocking, captures FCP/LCP/TBT/TTFB/CLS/INP/TTI per route, and fires one `events.request` per metric. |
+| `loadtest/vendor/web-vitals.iife.js` | Vendored copy of Google's web-vitals library (7.2 KB). The locustfile injects this into every page load via `add_init_script`. |
+| `loadtest/requirements.txt` | Pinned Python deps: `locust>=2.43`, `locust-plugins>=4.0`, `playwright>=1.45`. |
 | `scripts/tmux-run.sh` | 4-pane tmux orchestrator. The Locust pane starts the web UI on `:8089`. |
 | `scripts/tmux-stop.sh` | Tears down the tmux session and frees all ports (3000, 5173, 8089). |
 | `scripts/wait-for-services.sh` | Blocks until the API and SPA are healthy; used by tmux panes. |
@@ -438,7 +458,7 @@ The project already has `@playwright/test` (Node) installed, which downloads Chr
 
 ## TL;DR
 
-The load test is a real-browser test. Each simulated user is a headless Chromium. The test navigates the SPA, waits for the page to be ready, and reports seven Web Vitals (FCP, LCP, TBT, TTFB, CLS, INP) plus a route-aware TTI per page load. Every number in the report corresponds to a metric a real user would perceive, measured by a real browser, with the same network and CPU constraints a real user would have.
+The load test is a real-browser test. Each simulated user is a headless Chromium, launched by `locust-plugins`' `PlaywrightUser` and bridged into Locust's gevent world via an asyncio event loop. The test navigates the SPA, waits for the page to be ready, and reports seven Web Vitals (FCP, LCP, TBT, TTFB, CLS, INP) plus a route-aware TTI per page load. Every number in the report corresponds to a metric a real user would perceive, measured by a real browser, with the same network and CPU constraints a real user would have.
 
 To run it:
 
