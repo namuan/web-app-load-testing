@@ -11,35 +11,6 @@ A complete, **offline-first** heavy UI demo with:
 
 ![](docs/locust.png)
 
-## Repository Layout
-
-```
-.
-├── app/                # Vite + React + TypeScript SPA
-│   ├── src/
-│   ├── tests/e2e/      # Playwright specs
-│   ├── public/
-│   ├── vite.config.ts
-│   ├── playwright.config.ts
-│   └── package.json
-├── api/                # Fastify mock backend
-│   ├── fixtures/       # JSON fixtures
-│   ├── server.ts
-│   └── package.json
-├── loadtest/
-│   ├── locustfile_browser.py     # real-browser SPA load test (locust-plugins PlaywrightUser + web-vitals)
-│   ├── vendor/web-vitals.iife.js # vendored web-vitals for the browser test
-│   └── requirements.txt
-├── scripts/
-│   ├── wait-for-services.sh
-│   ├── tmux-run.sh
-│   ├── tmux-stop.sh
-│   └── verify-offline.sh
-├── .env
-├── package.json        # npm workspaces root
-└── README.md
-```
-
 ## One-time setup (online)
 
 ```bash
